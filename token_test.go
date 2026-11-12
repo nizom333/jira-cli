@@ -8,7 +8,7 @@ import (
 
 // Токен не должен попадать в argv (виден в ps) — только в stdin.
 func TestSaveTokenCmdKeepsTokenOutOfArgv(t *testing.T) {
-	const token = "NjQ5MzQxMzk4OTQ0OkSecretPAT+/="
+	const token = "NotARealToken0123456789+/="
 	for goos, wantStdin := range map[string]string{
 		"darwin": token + "\n" + token + "\n", // security просит ввести пароль дважды
 		"linux":  token,

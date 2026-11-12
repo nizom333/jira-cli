@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -82,7 +83,8 @@ func TestURLCommandSavesAndShows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+	// права unix; в Windows файл защищён ACL папки профиля, Mode их не показывает
+	if perm := fi.Mode().Perm(); runtime.GOOS != "windows" && perm&0o077 != 0 {
 		t.Errorf("config.json доступен другим: %v", perm)
 	}
 }
