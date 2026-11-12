@@ -1,0 +1,22 @@
+jira
+dist/
+
+# своё дополнение к скиллу (make install дописывает его в установленный SKILL.md)
+skill/local.md
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
+
+# Remember plugin session history (personal)
+.remember/
+
+# agent worktrees
+.claude/worktrees/
+jira-cli
+
+# замок монитора Dolt — файл времени выполнения
+.beads/dolt-monitor.pid.lock
+
+# слова не для публикации — их проверяет public_test.go
+.private-words
