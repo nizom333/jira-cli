@@ -9,14 +9,33 @@
 
 ## Установка
 
+**Homebrew** (macOS, Linux):
+
+```sh
+brew install nizom333/tap/jira-cli
+```
+
+**Scoop** (Windows):
+
+```sh
+scoop bucket add nizom333 https://github.com/nizom333/homebrew-tap
+scoop install jira-cli
+```
+
+**Готовый бинарник** под macOS, Linux и Windows — на странице [релизов](https://github.com/nizom333/jira-cli/releases): распакуйте архив и положите `jira` в папку из `PATH`.
+
+**Go**: `go install github.com/nizom333/jira-cli@latest` — бинарник будет называться `jira-cli`; переименуйте его в `jira` или заведите алиас — справка и скилл называют команду `jira`.
+
+Скилл для Claude Code эти способы сами не ставят: скопируйте `SKILL.md` (он есть в архиве релиза и в папке `skill/`) в `~/.claude/skills/jira/`.
+
+### Из исходников
+
 Нужен Go 1.22+.
 
 ```sh
 git clone https://github.com/nizom333/jira-cli && cd jira-cli
 make install          # тесты, сборка, копирует бинарник в ~/.local/bin/jira и скилл в ~/.claude/skills/jira
 ```
-
-Без клонирования: `go install github.com/nizom333/jira-cli@latest` — бинарник будет называться `jira-cli`; переименуйте его в `jira` или заведите алиас — справка и скилл называют команду `jira`. Скилл для Claude так не ставится.
 
 Папка `~/.local/bin` должна быть в `PATH`. Другое место установки: `make install BIN=/usr/local/bin/jira`.
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"slices"
 	"strings"
 )
@@ -19,6 +20,7 @@ const usage = `jira — CLI к Jira Data Center
   jira url [URL]                     показать адрес Jira и откуда он взят; с URL — сохранить
   jira type [ТИП]                    тип задачи для create без --type (изначально Task); с ТИП — сохранить
   jira me                            проверить токен
+  jira version                       версия
   jira ls [--all] [--user U] [--project P] [-n 30]
                                      мои задачи (по умолчанию незакрытые)
   jira q 'JQL' [-n 30]               поиск
@@ -285,6 +287,24 @@ func day(ts string) string {
 
 // ---------- main ----------
 
+// version задаётся при сборке релиза: -ldflags "-X main.version=1.2.3".
+var version = ""
+
+// buildVersion — версия релиза; у сборки через go install — версия модуля; иначе "dev".
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return strings.TrimPrefix(bi.Main.Version, "v")
+	}
+	return "dev"
+}
+
+func cmdVersion(_ *Client, _ Args) (result, error) {
+	return message("jira " + buildVersion() + "\n"), nil
+}
+
 func main() {
 	name, rest := "help", []string(nil) // без аргументов — usage
 	if len(os.Args) > 1 {
@@ -326,6 +346,7 @@ var commands = map[string]command{
 	"logout":   {fn: cmdLogout},
 	"url":      {fn: cmdURL, args: arity{0, 1}},
 	"type":     {fn: cmdType, args: arity{0, 1}},
+	"version":  {fn: cmdVersion},
 	"me":       {fn: cmdMe, json: true, needsClient: true},
 	"ls":       {fn: cmdLs, flags: flags("all", "user=", "project=", "n="), json: true, needsClient: true},
 	"q":        {fn: cmdQuery, flags: flags("n="), args: arity{1, many}, json: true, needsClient: true},
@@ -390,6 +411,8 @@ func run(w io.Writer, name string, args []string, connect func() (*Client, error
 	switch name {
 	case "help", "-h", "--help":
 		return render(w, message(usage), false)
+	case "--version":
+		name = "version"
 	}
 	cmd, ok := commands[name]
 	if !ok {

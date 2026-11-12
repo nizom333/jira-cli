@@ -1,6 +1,7 @@
 BIN   ?= $(HOME)/.local/bin/jira
 SKILL ?= $(HOME)/.claude/skills/jira
-LDFLAGS = -s -w
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+LDFLAGS = -s -w -X main.version=$(VERSION)
 
 .PHONY: build test install dist clean
 

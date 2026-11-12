@@ -15,8 +15,8 @@ skill/local.md
 .claude/worktrees/
 jira-cli
 
-# замок монитора Dolt — файл времени выполнения
-.beads/dolt-monitor.pid.lock
+# трекер задач beads — только локально
+.beads/
 
 # слова не для публикации — их проверяет public_test.go
 .private-words

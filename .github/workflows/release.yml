@@ -1,0 +1,48 @@
+name: release
+
+# Тег vX.Y.Z → тесты, бинарники под все платформы, GitHub Release с архивами и checksums.txt.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - name: build
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            name="jira-cli_${version}_${os}_${arch}"
+            dir="build/${name}"
+            mkdir -p "$dir"
+            bin=jira; [ "$os" = windows ] && bin=jira.exe
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w -X main.version=${version}" -o "${dir}/${bin}" .
+            cp LICENSE README.md skill/SKILL.md "$dir/"
+            if [ "$os" = windows ]; then
+              (cd "$dir" && zip -q "../../dist/${name}.zip" *)
+            else
+              tar -C "$dir" -czf "dist/${name}.tar.gz" .
+            fi
+          done
+          (cd dist && sha256sum * > checksums.txt)
+          ls -l dist
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --title "$TAG" --generate-notes
