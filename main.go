@@ -24,6 +24,11 @@ const usage = `jira — CLI к Jira Data Center
   jira ls [--all] [--user U] [--project P] [-n 30]
                                      мои задачи (по умолчанию незакрытые)
   jira q 'JQL' [-n 30]               поиск
+  jira sprint [now|active|ID] [--project P] [--user U] [--open] [-n 30]
+                                     без аргумента — активные спринты; now — задачи текущих
+                                     (активный, сегодня от даты начала до даты конца включительно);
+                                     active — задачи всех активных, и просроченных; ID — задачи спринта.
+                                     Задачи — всех исполнителей; --user — одного, --open — незакрытые.
   jira show KEY [--comments 3] [--full]
   jira create --project P --summary S [--type T] [--desc D|-]
               [--estimate 4h] [--assignee U|me|none] [--yes]
@@ -36,16 +41,24 @@ const usage = `jira — CLI к Jira Data Center
                                      месяц по локальному времени; --by — только day;
                                      в report --json всегда warnings ([] если нет).
 
-  --json   сжатый JSON вместо текста — только me, ls, q, show, report
+  --json   сжатый JSON вместо текста — только me, ls, q, sprint, show, report
            (команды записи --json не принимают: «неизвестный флаг»).
            show --json: + resolved, parent {key, summary}, description_truncated, comments ([] если нет).
   Ошибка до запроса к Jira: лишний или пустой аргумент, неизвестный или повторённый флаг,
            флаг без нужного значения, пустое значение флага или значение не того формата
-           (--assignee "", -n 0, --date 2026-13-01), значение у флага-переключателя (--yes=false).
+           (--assignee "", -n 0, --date 2026-13-01), значение у флага-переключателя (--yes=false),
+           флаг задач спринта (--user, --open, -n) в jira sprint без now|active|ID.
   Текст, начинающийся с «-», — после --: jira comment KEY -- "-1 баг".
   create/assign без --yes только показывают превью и ничего не меняют;
            исполнитель в превью — username (Display Name), по умолчанию в create — me.
   Вывод ls/q: KEY<TAB>STATUS<TAB>ESTIMATE<TAB>SPENT<TAB>SUMMARY
+  Вывод sprint: ID<TAB>НАЧАЛО<TAB>КОНЕЦ<TAB>ФАЗА<TAB>ДОСКА<TAB>NAME, даты — по локальному времени
+           (фаза: идёт, просрочен — дата конца прошла, а спринт не закрыт, не начат, без дат);
+           sprint now|active|ID: строка «# ID NAME · начало – конец · фаза», под ней задачи как в ls;
+           доска, на которой Jira ответила ошибкой, пропускается: «# предупреждение: …» в конце,
+           в sprint --json всегда warnings ([] если нет). Нет текущего спринта — sprint now
+           завершается ошибкой со списком активных спринтов и пропущенных досок; active без спринтов —
+           «# нет активных спринтов» без ошибки.
   Время в выводе (ls, q, show, report) — часы и минуты: 8h, 2h30m, 30m; - = пусто (1d = 8h).
   В --json — числа в часах: estimate_h, spent_h (+ remaining_h в show), 0 = пусто.
   Переменные JIRA_URL и JIRA_TOKEN важнее сохранённых адреса и токена (CI, скрипты).
@@ -350,6 +363,7 @@ var commands = map[string]command{
 	"me":       {fn: cmdMe, json: true, needsClient: true},
 	"ls":       {fn: cmdLs, flags: flags("all", "user=", "project=", "n="), json: true, needsClient: true},
 	"q":        {fn: cmdQuery, flags: flags("n="), args: arity{1, many}, json: true, needsClient: true},
+	"sprint":   {fn: cmdSprint, flags: flags("project=", "user=", "open", "n="), args: arity{0, 1}, json: true, needsClient: true},
 	"show":     {fn: cmdShow, flags: flags("comments=", "full"), args: arity{1, 1}, json: true, needsClient: true},
 	"report":   {fn: cmdReport, flags: flags("project=", "user=", "by="), args: arity{0, 1}, json: true, needsClient: true},
 	"create":   {fn: cmdCreate, flags: flags("project=", "summary=", "type=", "desc=", "estimate=", "assignee=", "yes"), needsClient: true},

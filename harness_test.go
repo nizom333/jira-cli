@@ -11,6 +11,7 @@ package main
 //	fj.requests // []request{Method, Path (с query), Body, Auth} — в порядке поступления
 //
 // Ключ маршрута — "МЕТОД путь"; без "?" query при сопоставлении игнорируется.
+// searchJQLs(t, fj) / searchJQL(t, fj) — JQL всех / первого запроса поиска.
 // Запрос без маршрута отвечает 404 и валит тест. Клиент создаётся newClientWithToken
 // с токеном fakeToken; JIRA_TOKEN/Keychain не читаются.
 
@@ -19,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -91,4 +93,30 @@ func (fj *fakeJira) run(cmd string, args ...string) (string, error) {
 	connect := func() (*Client, error) { return newClientWithToken(strings.TrimRight(fj.srv.URL, "/"), fakeToken), nil }
 	err := run(&buf, cmd, args, connect)
 	return buf.String(), err
+}
+
+// searchJQLs — JQL всех запросов поиска в порядке поступления.
+func searchJQLs(t *testing.T, fj *fakeJira) []string {
+	t.Helper()
+	var jqls []string
+	for _, r := range fj.requests {
+		if p, q, ok := strings.Cut(r.Path, "?"); ok && p == "/rest/api/2/search" {
+			v, err := url.ParseQuery(q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			jqls = append(jqls, v.Get("jql"))
+		}
+	}
+	return jqls
+}
+
+// searchJQL — JQL первого запроса поиска.
+func searchJQL(t *testing.T, fj *fakeJira) string {
+	t.Helper()
+	jqls := searchJQLs(t, fj)
+	if len(jqls) == 0 {
+		t.Fatal("нет запроса поиска")
+	}
+	return jqls[0]
 }

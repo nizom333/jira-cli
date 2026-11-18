@@ -1,7 +1,6 @@
 package main
 
 import (
-	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -208,22 +207,6 @@ func TestBuildMonthReport(t *testing.T) {
 			}
 		})
 	}
-}
-
-// searchJQL — JQL первого запроса поиска.
-func searchJQL(t *testing.T, fj *fakeJira) string {
-	t.Helper()
-	for _, r := range fj.requests {
-		if p, q, ok := strings.Cut(r.Path, "?"); ok && p == "/rest/api/2/search" {
-			v, err := url.ParseQuery(q)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return v.Get("jql")
-		}
-	}
-	t.Fatal("нет запроса поиска")
-	return ""
 }
 
 // JQL расширен на ±1 день вокруг окна: точную границу по поясу проводит расчёт.

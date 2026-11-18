@@ -44,13 +44,9 @@ func cmdLs(c *Client, a Args) (result, error) {
 	if err != nil {
 		return nil, err
 	}
-	who := "currentUser()" // свои задачи — без запроса к /myself
-	if ref := a.get("user"); !isSelfRef(ref) {
-		u, err := c.filterUser(ref)
-		if err != nil {
-			return nil, err
-		}
-		who = jqlQuote(u.Name)
+	who, err := assigneeJQL(c, a.get("user"))
+	if err != nil {
+		return nil, err
 	}
 	parts := []string{"assignee = " + who}
 	if !a.has("all") {
@@ -59,7 +55,20 @@ func cmdLs(c *Client, a Args) (result, error) {
 	if p := a.get("project"); p != "" {
 		parts = append(parts, "project = "+jqlQuote(p))
 	}
-	return listIssues(c, strings.Join(parts, " AND ")+" ORDER BY updated DESC", n)
+	return listResult(listIssues(c, strings.Join(parts, " AND ")+" ORDER BY updated DESC", n))
+}
+
+// assigneeJQL — значение assignee в JQL для User reference ref из --user:
+// "" и me — currentUser() (свои задачи — без запроса к /myself), иначе username, проверенный в Jira.
+func assigneeJQL(c *Client, ref string) (string, error) {
+	if isSelfRef(ref) {
+		return "currentUser()", nil
+	}
+	u, err := c.filterUser(ref)
+	if err != nil {
+		return "", err
+	}
+	return jqlQuote(u.Name), nil
 }
 
 func cmdQuery(c *Client, a Args) (result, error) {
@@ -71,7 +80,15 @@ func cmdQuery(c *Client, a Args) (result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return listIssues(c, jql, n)
+	return listResult(listIssues(c, jql, n))
+}
+
+// listResult — результат команды из listIssues: при ошибке — nil-интерфейс, а не nil *issueList.
+func listResult(l *issueList, err error) (result, error) {
+	if err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 type issueRow struct {
@@ -100,7 +117,7 @@ func (l *issueList) text(w io.Writer) {
 }
 
 // listIssues — первые n задач по jql (n уже проверен вызывающим до любых запросов).
-func listIssues(c *Client, jql string, n int) (result, error) {
+func listIssues(c *Client, jql string, n int) (*issueList, error) {
 	r, err := c.search(jql, listFields, 0, n)
 	if err != nil {
 		return nil, err

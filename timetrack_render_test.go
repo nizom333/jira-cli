@@ -53,6 +53,7 @@ const searchReport = `{"total":3,"issues":[
   "resolutiondate":"2026-10-20T12:00:00.000+0500","worklog":{"total":0,"worklogs":[]}}}]}`
 
 func TestReportRendersDurationsAsHoursMinutes(t *testing.T) {
+	inLocal(t, zone05) // даты в searchReport — по +05
 	fj := newFakeJira(t, withUserU(routes{"GET /rest/api/2/search": {200, searchReport}}))
 	out, err := fj.run("report", "2026-10", "--user", "u")
 	if err != nil {
@@ -68,6 +69,7 @@ func TestReportRendersDurationsAsHoursMinutes(t *testing.T) {
 }
 
 func TestReportJSONGivesHoursAsNumbers(t *testing.T) {
+	inLocal(t, zone05) // даты в searchReport — по +05
 	fj := newFakeJira(t, withUserU(routes{"GET /rest/api/2/search": {200, searchReport}}))
 	out, err := fj.run("report", "2026-10", "--user", "u", "--json")
 	if err != nil {

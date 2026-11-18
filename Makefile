@@ -3,13 +3,18 @@ SKILL ?= $(HOME)/.claude/skills/jira
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
 LDFLAGS = -s -w -X main.version=$(VERSION)
 
-.PHONY: build test install dist clean
+.PHONY: build test test-tz install dist clean
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o jira .
 
 test:
 	go test ./...
+
+# тесты в крайних поясах: даты по локальному времени не должны зависеть от пояса машины
+test-tz:
+	TZ=Pacific/Pago_Pago go test -count=1 ./...
+	TZ=Pacific/Kiritimati go test -count=1 ./...
 
 install: test build
 	mkdir -p $(dir $(BIN))

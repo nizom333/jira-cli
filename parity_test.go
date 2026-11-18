@@ -117,9 +117,12 @@ var multilineReport = routes{
 }
 
 // reportInUTC: окно отчёта — в time.Local; фиксируем UTC, чтобы даты в expected не зависели от машины.
-func reportInUTC(t *testing.T) {
+func reportInUTC(t *testing.T) { inLocal(t, time.UTC) }
+
+// inLocal — пояс пользователя в тесте: time.Local = loc до конца теста.
+func inLocal(t *testing.T, loc *time.Location) {
 	old := time.Local
-	time.Local = time.UTC
+	time.Local = loc
 	t.Cleanup(func() { time.Local = old })
 }
 

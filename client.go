@@ -438,3 +438,79 @@ func (c *Client) setBoardEstimate(key string, board int, est string) error {
 	return c.do("PUT", fmt.Sprintf("/rest/agile/1.0/issue/%s/estimation?boardId=%d", url.PathEscape(key), board),
 		map[string]string{"value": est}, nil)
 }
+
+// Board — доска Agile.
+type Board struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// Sprint — спринт Agile; даты — ISO 8601 с сервера ("" у спринта без дат).
+type Sprint struct {
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	State         string `json:"state"` // sprintFuture, sprintActive, sprintClosed
+	StartDate     string `json:"startDate"`
+	EndDate       string `json:"endDate"`
+	Goal          string `json:"goal"`
+	OriginBoardID int    `json:"originBoardId"`
+}
+
+// Состояния спринта в Jira.
+const (
+	sprintFuture = "future"
+	sprintActive = "active"
+	sprintClosed = "closed"
+)
+
+// agilePage — страница списка Agile API (isLast — последняя).
+type agilePage[T any] struct {
+	IsLast bool `json:"isLast"`
+	Values []T  `json:"values"`
+}
+
+// agileAll собирает все страницы списка Agile API по пути path (с query или без).
+func agileAll[T any](c *Client, path string) ([]T, error) {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	var all []T
+	for {
+		var p agilePage[T]
+		if err := c.do("GET", fmt.Sprintf("%s%sstartAt=%d&maxResults=50", path, sep, len(all)), nil, &p); err != nil {
+			return nil, err
+		}
+		all = append(all, p.Values...)
+		if p.IsLast || len(p.Values) == 0 {
+			return all, nil
+		}
+	}
+}
+
+// scrumBoards — scrum-доски (у kanban спринтов нет); project != "" — только доски проекта.
+func (c *Client) scrumBoards(project string) ([]Board, error) {
+	q := url.Values{"type": {"scrum"}}
+	if project != "" {
+		q.Set("projectKeyOrId", project)
+	}
+	return agileAll[Board](c, "/rest/agile/1.0/board?"+q.Encode())
+}
+
+// boardActiveSprints — активные спринты доски.
+func (c *Client) boardActiveSprints(board int) ([]Sprint, error) {
+	return agileAll[Sprint](c, fmt.Sprintf("/rest/agile/1.0/board/%d/sprint?state=%s", board, sprintActive))
+}
+
+// sprint — спринт по id; несуществующий → «спринт N не найден».
+func (c *Client) sprint(id int) (*Sprint, error) {
+	var s Sprint
+	if err := c.do("GET", fmt.Sprintf("/rest/agile/1.0/sprint/%d", id), nil, &s); err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+			return nil, fmt.Errorf("спринт %d не найден", id)
+		}
+		return nil, err
+	}
+	return &s, nil
+}
