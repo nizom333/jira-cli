@@ -51,6 +51,11 @@ func TestArgsRejectedBeforeJira(t *testing.T) {
 		{[]string{"report", "2026-13", "--user", "u"}, "месяц: ожидается YYYY-MM"},
 		{[]string{"log", "K-1", "2h", "--date", "2026-13-01"}, "--date: ожидается YYYY-MM-DD"},
 		{[]string{"create", "--project", "K", "--summary", "S", "--estimate", "abc"}, "--estimate:"},
+		{[]string{"vi", "-n", "0"}, "-n: ожидается положительное число"},
+		{[]string{"vi", "--sprint", "x"}, "--sprint: спринт: ожидается now, active или номер спринта"},
+		{[]string{"vi", "--sprint", ""}, "--sprint: пустое значение"},
+		{[]string{"vi", "PROJ"}, `лишний аргумент "PROJ" (использование: jira vi [--project P] [--sprint now|active|ID] [--user U] [-n 100])`},
+		{[]string{"vi", "--json"}, "неизвестный флаг --json"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			fj := newFakeJira(t, routes{})

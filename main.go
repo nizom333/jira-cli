@@ -30,6 +30,11 @@ const usage = `jira — CLI к Jira Data Center
                                      active — задачи всех активных, и просроченных; ID — задачи спринта.
                                      Задачи — всех исполнителей; --user — одного, --open — незакрытые.
   jira show KEY [--comments 3] [--full]
+  jira vi [--project P] [--sprint now|active|ID] [--user U] [-n 100]
+                                     интерактивно, нужен терминал: мои задачи списком и канбаном
+                                     (незакрытые и закрытые за 14 дней; со --sprint — все задачи
+                                     спринта); закрыть, статус, оценка, списание, комментарий,
+                                     исполнитель; p — проект, u — мои/вся команда, ? — все клавиши.
   jira create --project P --summary S [--type T] [--desc D|-]
               [--estimate 4h] [--assignee U|me|none] [--yes]
   jira assign KEY U|me|none [--yes]
@@ -94,7 +99,11 @@ type Issue struct {
 		Summary     string `json:"summary"`
 		Description string `json:"description"`
 		Status      struct {
-			Name string `json:"name"`
+			ID             string `json:"id"`
+			Name           string `json:"name"`
+			StatusCategory struct {
+				Key string `json:"key"` // Status category: new, indeterminate, done
+			} `json:"statusCategory"`
 		} `json:"status"`
 		IssueType struct {
 			Name string `json:"name"`
@@ -365,6 +374,7 @@ var commands = map[string]command{
 	"q":        {fn: cmdQuery, flags: flags("n="), args: arity{1, many}, json: true, needsClient: true},
 	"sprint":   {fn: cmdSprint, flags: flags("project=", "user=", "open", "n="), args: arity{0, 1}, json: true, needsClient: true},
 	"show":     {fn: cmdShow, flags: flags("comments=", "full"), args: arity{1, 1}, json: true, needsClient: true},
+	"vi":       {fn: cmdVi, flags: flags("project=", "sprint=", "user=", "n="), needsClient: true},
 	"report":   {fn: cmdReport, flags: flags("project=", "user=", "by="), args: arity{0, 1}, json: true, needsClient: true},
 	"create":   {fn: cmdCreate, flags: flags("project=", "summary=", "type=", "desc=", "estimate=", "assignee=", "yes"), needsClient: true},
 	"assign":   {fn: cmdAssign, flags: flags("yes"), args: arity{2, 2}, needsClient: true},

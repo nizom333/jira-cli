@@ -24,9 +24,12 @@ func cmdMe(c *Client, a Args) (result, error) {
 	return (*meResult)(u), nil
 }
 
-func limit(a Args) (int, error) {
+func limit(a Args) (int, error) { return limitOr(a, 30) }
+
+// limitOr — значение -n или def, если флага нет.
+func limitOr(a Args, def int) (int, error) {
 	if !a.has("n") {
-		return 30, nil
+		return def, nil
 	}
 	n, err := strconv.Atoi(a.get("n"))
 	if err != nil || n < 1 {
@@ -196,7 +199,6 @@ func (s *showResult) text(w io.Writer) {
 const showFields = "summary,description,status,issuetype,priority,project,assignee,reporter,created,updated,resolutiondate,timetracking,parent,comment"
 
 func cmdShow(c *Client, a Args) (result, error) {
-	key := a.arg(0)
 	nc := 3
 	if a.has("comments") {
 		v, err := strconv.Atoi(a.get("comments"))
@@ -205,6 +207,16 @@ func cmdShow(c *Client, a Args) (result, error) {
 		}
 		nc = v
 	}
+	s, err := loadShow(c, a.arg(0), nc, a.has("full"))
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// loadShow читает задачу key так, как её показывает show: последние nc комментариев,
+// описание целиком при full, иначе — первые 4000 символов.
+func loadShow(c *Client, key string, nc int, full bool) (*showResult, error) {
 	is, err := c.getIssue(key, showFields)
 	if err != nil {
 		return nil, err
@@ -217,7 +229,7 @@ func cmdShow(c *Client, a Args) (result, error) {
 	desc := strings.TrimSpace(f.Description)
 	const maxDesc = 4000
 	cut := false
-	if !a.has("full") && len([]rune(desc)) > maxDesc {
+	if !full && len([]rune(desc)) > maxDesc {
 		desc, cut = string([]rune(desc)[:maxDesc]), true
 	}
 	prio := "-"
@@ -329,7 +341,10 @@ type transition struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	To   struct {
-		Name string `json:"name"`
+		Name           string `json:"name"`
+		StatusCategory struct {
+			Key string `json:"key"` // Status category целевого статуса: new, indeterminate, done
+		} `json:"statusCategory"`
 	} `json:"to"`
 }
 

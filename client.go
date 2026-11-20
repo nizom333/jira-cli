@@ -401,6 +401,21 @@ func (c *Client) setOriginalEstimate(key, est string) error {
 	return c.do("PUT", issuePath(key, ""), body, nil)
 }
 
+// Project — проект Jira.
+type Project struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+// projects — все проекты, которые видит пользователь.
+func (c *Client) projects() ([]Project, error) {
+	var ps []Project
+	if err := c.do("GET", "/rest/api/2/project", nil, &ps); err != nil {
+		return nil, err
+	}
+	return ps, nil
+}
+
 // projectBoards — id досок Agile проекта.
 func (c *Client) projectBoards(project string) ([]int, error) {
 	var r struct {
