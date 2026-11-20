@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -20,14 +21,26 @@ func newViTest(t *testing.T, rs routes, s viScope, issues ...viIssue) (*viModel,
 	}
 	m := newViModel(c, s, issues, len(issues))
 	m.open = func(string) error { return nil }
+	m.preview = false // панель справа грузит подробности — её тесты включают её сами
+	m.previewDelay = 0
 	m.update(resizeMsg{120, 30})
 	return m, fj
 }
 
-// settle выполняет cmd и цепочку следующих, как цикл runProgram.
+// settle выполняет cmd и все следующие за ней (batch — каждую), как цикл runProgram.
 func settle(m *viModel, c cmd) {
-	for c != nil {
-		c = m.update(c())
+	queue := []cmd{c}
+	for len(queue) > 0 {
+		c, queue = queue[0], queue[1:]
+		if c == nil {
+			continue
+		}
+		r := c()
+		if b, ok := r.(batchMsg); ok {
+			queue = append(queue, b...)
+			continue
+		}
+		queue = append(queue, m.update(r))
 	}
 }
 
@@ -523,15 +536,18 @@ func TestViDetail(t *testing.T) {
 			"status":{"name":"Открыта"},"issuetype":{"name":"Задача"},"comment":{"total":1,"comments":[{"author":{"name":"ivan"},"body":"ок","created":"2026-11-19T10:00:00.000+0000"}]}}}`},
 	}, viScope{}, isOpen)
 	press(m, key{name: keyEnter})
-	if m.screen != scrDetail || !strings.Contains(m.detailText, "Сделать отчёт") || !strings.Contains(m.detailText, "- ivan 2026-11-19: ок") {
-		t.Fatalf("screen = %v, text = %q", m.screen, m.detailText)
+	d := m.details["K-1"]
+	if m.screen != scrDetail || d == nil || d.show == nil || d.show.Summary != "Сделать отчёт" {
+		t.Fatalf("screen = %v, detail = %+v", m.screen, d)
 	}
 	if p := fj.requests[0].Path; !strings.Contains(p, "fields="+showFields) {
 		t.Fatalf("path = %s", p)
 	}
 	text := plainFrame(m.view(120, 30))
-	if !strings.Contains(text, "строка 2") || !strings.Contains(text, "/browse/K-1") {
-		t.Fatalf("view:\n%s", text)
+	for _, want := range []string{"Сделать отчёт", " Открыта ", "строка 2", "── Комментарии · 1", "ivan · 2026-11-19", "  ок", "/browse/K-1"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("нет %q:\n%s", want, text)
+		}
 	}
 	press(m, key{name: keyEsc})
 	if m.screen != scrMain {
@@ -559,13 +575,23 @@ func TestViViewFitsWindowAndStripsControls(t *testing.T) {
 	issues := []viIssue{evil, wide, isDone, isOpen2, viIss("K-7", "Ревью", "10000", categoryInProgress),
 		viIss("K-8", "Тест", "10004", categoryInProgress), viIss("K-9", "Бэклог", "10002", categoryNew)}
 	m, _ := newViTest(t, routes{}, viScope{project: "K", team: true}, issues...)
-	m.detailKey = "K-1"
-	m.detailText = "K-1 [Задача] В работе · -\n\x1b[31mзаголовок\n\nописание\tс табом"
+	m.detailKey = "K-1\x1b[2J"
+	m.details[m.detailKey] = &viDet{show: &showResult{Key: m.detailKey, Type: "Задача\x1b[1m", Status: "В\x1b]0;x\aработе",
+		Priority: "Высокий", Summary: "\x1b[31mзаголовок\nв две строки", Assignee: "ivan\x07", Reporter: "日本語",
+		Estimate: 3600, Spent: 7200, Remaining: 1800, Created: "2026-11-01", Updated: "2026-11-19",
+		Parent:      &showParent{Key: "K-0", Summary: "эпик\x1b[0m"},
+		Description: "h1. Заголовок\x1b[2J\n* пункт [ссылка|https://e.x/\x1b]8;;]\n{code}\nкод\tс табом \x1b[31m 日本\n{code}\n|a|b|\nописание\tс табом",
+		Comments:    []showComment{{Author: "petr\x1b[1m", Date: "2026-11-19", Body: "bq. цитата\x07"}}, CommentsTotal: 3}}
+	m.details["K-2"] = &viDet{err: errors.New("нет доступа\x1b[2J")}
 	setups := map[string]func(){
-		"list":   func() { m.mode, m.screen = viList, scrMain },
-		"board":  func() { m.mode, m.screen = viBoard, scrMain },
-		"detail": func() { m.screen = scrDetail },
-		"help":   func() { m.screen = scrHelp },
+		"list":          func() { m.mode, m.screen, m.preview = viList, scrMain, false },
+		"board":         func() { m.mode, m.screen = viBoard, scrMain },
+		"list+preview":  func() { m.mode, m.preview, m.sel = viList, true, m.detailKey },
+		"board+preview": func() { m.mode = viBoard },
+		"preview-error": func() { m.mode, m.sel = viList, "K-2" },
+		"preview-load":  func() { m.sel = "K-7" },
+		"detail":        func() { m.screen = scrDetail },
+		"help":          func() { m.screen = scrHelp },
 		"picker": func() {
 			m.screen = scrMain
 			m.picker = &viPicker{title: "Проект", search: true, items: []pickItem{{label: "все проекты"}, {label: "K  Кей\x1b[1m", note: "3 моих"}}}
@@ -573,7 +599,8 @@ func TestViViewFitsWindowAndStripsControls(t *testing.T) {
 		"input":   func() { m.picker = nil; m.ask("Комментарий к K-1: ", "текст 日本", nil) },
 		"confirm": func() { m.input = nil; m.confirm = &viConfirm{text: "Закрыть K-1 → Готово?"} },
 	}
-	for _, name := range []string{"list", "board", "detail", "help", "picker", "input", "confirm"} {
+	for _, name := range []string{"list", "board", "list+preview", "board+preview", "preview-error", "preview-load",
+		"detail", "help", "picker", "input", "confirm"} {
 		setups[name]()
 		for _, size := range [][2]int{{40, 8}, {80, 24}, {120, 30}, {200, 50}, {30, 5}} {
 			w, h := size[0], size[1]

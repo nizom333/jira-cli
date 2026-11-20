@@ -1,6 +1,7 @@
 package main
 
-// Отрисовка jira vi: кадр — шапка, тело (список, канбан, подробно или справка) и низ (выбор из списка
+// Отрисовка jira vi: кадр — шапка, тело (список или канбан с панелью справа, подробно или справка;
+// подробности задачи — vi_detail.go) и низ (выбор из списка
 // или подтверждение, строка состояния, поле ввода, подсказка по клавишам). Каждая строка — ровно
 // ширина окна; всё, что пришло с сервера, проходит через fit/clean (без управляющих символов).
 // view поправляет прокрутку (listTop, boardLeft, colTop, detailTop) под размер окна.
@@ -34,10 +35,20 @@ func (m *viModel) view(w, h int) frame {
 		body = viewHelp(w)
 	case m.screen == scrDetail:
 		body = m.viewDetail(w, bodyH)
-	case m.mode == viBoard:
-		body = m.viewBoard(w, bodyH)
 	default:
-		body = m.viewList(w, bodyH)
+		mw := w
+		pw := m.previewW(w)
+		if pw > 0 {
+			mw = w - pw - 1
+		}
+		if m.mode == viBoard {
+			body = m.viewBoard(mw, bodyH)
+		} else {
+			body = m.viewList(mw, bodyH)
+		}
+		if pw > 0 {
+			body = sideBySide(body, mw, m.viewPreview(pw, bodyH), bodyH)
+		}
 	}
 	lines := append([]string{m.viewHeader(w)}, fill(body, w, bodyH)...)
 	lines = append(lines, bottom...)
@@ -339,33 +350,9 @@ func (m *viModel) card(is viIssue, w int, selected bool) []string {
 
 // ---------- подробно ----------
 
-// detailLines — текст jira show, перенесённый по ширине w, и ссылка на задачу; nil — ещё загружается.
-func (m *viModel) detailLines(w int) []string {
-	if m.detailText == "" {
-		return nil
-	}
-	var out []string
-	for i, para := range strings.Split(strings.TrimRight(m.detailText, "\n"), "\n") {
-		if strings.TrimSpace(para) == "" {
-			out = append(out, fit("", w))
-			continue
-		}
-		for _, l := range wrap(para, w-2) {
-			l = fit(" "+l, w)
-			if i < 2 { // ключ, тип, статус и название
-				l = paint(styleBold, l)
-			}
-			out = append(out, l)
-		}
-	}
-	return append(out, fit("", w), paint(styleDim, fit(" "+m.c.base+"/browse/"+m.detailKey, w)))
-}
-
+// viewDetail — подробный вид: пустая строка сверху, подробности задачи с прокруткой.
 func (m *viModel) viewDetail(w, h int) []string {
-	lines := m.detailLines(w)
-	if lines == nil {
-		return []string{fit("", w), paint(styleDim, fit("  загрузка…", w))}
-	}
+	lines := append([]string{fit("", w)}, m.detailLines(m.detailKey, w, true)...)
 	m.detailTop = clamp(m.detailTop, 0, max(0, len(lines)-h))
 	return lines[m.detailTop:min(len(lines), m.detailTop+h)]
 }
@@ -375,6 +362,7 @@ func (m *viModel) viewDetail(w, h int) []string {
 var viHelp = []string{
 	"# Вид",
 	"  v Tab        список ↔ канбан           j k ↑ ↓   вверх, вниз",
+	"  i            панель с подробностями справа: показать или скрыть",
 	"  h l ← →      колонки канбана           g G       в начало, в конец",
 	"  Enter        подробно (Esc — назад)    /         поиск (Esc — сбросить)",
 	"  p            проект: набирайте ключ или название; «все проекты» — сброс",
@@ -390,6 +378,7 @@ var viHelp = []string{
 	"  a            исполнитель: username, me или none",
 	"  o            открыть в браузере",
 	"",
+	"  Вид, панель, проект и «мои/вся команда» сохраняются до следующего запуска.",
 	"  Клавиши работают и в русской раскладке. Любая клавиша — назад.",
 }
 
@@ -516,7 +505,7 @@ func (m *viModel) hints() string {
 	case m.screen == scrDetail:
 		return "j/k листать · d закрыть · m статус · e оценка · w списать · c коммент · a исполнитель · o браузер · Esc назад"
 	case m.mode == viBoard:
-		return "hjkl ←↓↑→ · H/L перенести · d закрыть · m статус · e оценка · w списать · c коммент · a исполнитель · Enter подробно · p проект · u мои/все · v список · / поиск · ? справка · q выход"
+		return "hjkl ←↓↑→ · H/L перенести · d закрыть · m статус · e оценка · w списать · c коммент · a исполнитель · Enter подробно · i панель · p проект · u мои/все · v список · / поиск · ? справка · q выход"
 	}
-	return "j/k ↑↓ · d закрыть · m статус · e оценка · w списать · c коммент · a исполнитель · Enter подробно · p проект · u мои/все · v канбан · / поиск · ? справка · q выход"
+	return "j/k ↑↓ · d закрыть · m статус · e оценка · w списать · c коммент · a исполнитель · Enter подробно · i панель · p проект · u мои/все · v канбан · / поиск · ? справка · q выход"
 }

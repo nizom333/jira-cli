@@ -44,6 +44,26 @@ type cursorPos struct{ row, col int }
 // resizeMsg — размер окна: первым сообщением и при каждом изменении.
 type resizeMsg struct{ w, h int }
 
+// batchMsg — несколько cmd сразу: цикл запускает каждую, в update это сообщение не попадает.
+type batchMsg []cmd
+
+// batch объединяет cmd в одну; nil пропускаются.
+func batch(cs ...cmd) cmd {
+	var out []cmd
+	for _, c := range cs {
+		if c != nil {
+			out = append(out, c)
+		}
+	}
+	switch len(out) {
+	case 0:
+		return nil
+	case 1:
+		return out[0]
+	}
+	return func() msg { return batchMsg(out) }
+}
+
 const (
 	enterScreen = "\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[2J" // альтернативный экран, без курсора и автопереноса
 	leaveScreen = "\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l"
@@ -90,6 +110,12 @@ func runProgram(p program) error {
 			scr.reset()
 			m = resizeMsg{w, h}
 		case m = <-results:
+			if b, ok := m.(batchMsg); ok {
+				for _, c := range b {
+					start(c)
+				}
+				continue
+			}
 		case <-sig:
 			return nil
 		}

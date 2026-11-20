@@ -4,12 +4,14 @@ package main
 // (закрыть, сменить статус, оценка, списание времени, комментарий, исполнитель).
 // viModel — программа для runProgram (term.go): update меняет состояние и возвращает cmd — запрос
 // к Jira в фоне; одновременно идёт не больше одного запроса (busy). Отрисовка — vi_view.go,
-// поле ввода, выбор из списка и подтверждение — vi_input.go.
+// поле ввода, выбор из списка и подтверждение — vi_input.go, подробности задачи — vi_detail.go,
+// состояние между запусками — vi_state.go.
 
 import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -146,6 +148,9 @@ type viOptions struct {
 	n             int
 }
 
+// scoped — область задана флагами: тогда она на этот запуск, сохранённая не применяется.
+func (o viOptions) scoped() bool { return o.project != "" || o.user != "" || o.sprint != nil }
+
 func parseViOptions(a Args) (viOptions, error) {
 	o := viOptions{project: a.get("project"), user: a.get("user")}
 	n, err := limitOr(a, viDefaultLimit)
@@ -222,11 +227,16 @@ func viSearch(c *Client, jql string, n int) ([]viIssue, int, error) {
 	return issues, r.Total, nil
 }
 
-// viTerminal — есть ли терминал; тесты подменяют.
-var viTerminal = isTerminal
+// viTerminal — есть ли терминал, viRun — экран; тесты подменяют.
+var (
+	viTerminal = isTerminal
+	viRun      = runProgram
+)
 
 // cmdVi: аргументы и терминал проверяются до запросов к Jira; первая загрузка — до входа в экран,
 // так что её ошибка (токен, проект, спринт) печатается как у любой команды.
+// Без флагов области экран открывается так, как его оставили (vi_state.go); выбранное в экране
+// сохраняется при выходе.
 func cmdVi(c *Client, a Args) (result, error) {
 	o, err := parseViOptions(a)
 	if err != nil {
@@ -235,19 +245,42 @@ func cmdVi(c *Client, a Args) (result, error) {
 	if !viTerminal() {
 		return nil, errors.New("jira vi — интерактивная команда, нужен терминал (в скриптах — jira ls, jira q, jira sprint)")
 	}
+	st := loadViState(c.base)
+	saved := st
+	restored := !o.scoped() // область — как в прошлый раз
+	if restored {
+		o.project = st.Project
+	}
 	scope, warnings, err := resolveViScope(c, o, localToday())
 	if err != nil {
 		return nil, err
 	}
+	if restored {
+		scope.team = st.Team && scope.canTeam()
+	}
 	issues, total, err := viSearch(c, scope.jql(), scope.n)
+	if err != nil && restored && st.Project != "" {
+		// проект из прошлого запуска удалён или недоступен — не мешать открыть экран
+		warnings = append(warnings, fmt.Sprintf("проект %s из прошлого раза не загрузился (%v) — показаны все проекты", st.Project, err))
+		scope.project, scope.team = "", false
+		st.Project, st.Team = "", false
+		issues, total, err = viSearch(c, scope.jql(), scope.n)
+	}
 	if err != nil {
 		return nil, err
 	}
 	m := newViModel(c, scope, issues, total)
+	m.restore(st)
 	if len(warnings) > 0 {
 		m.flashErr("предупреждение: " + strings.Join(warnings, "; "))
 	}
-	return nil, runProgram(m)
+	err = viRun(m)
+	if m.st != saved {
+		if serr := saveViState(m.st); serr != nil {
+			fmt.Fprintf(os.Stderr, "внимание: вид jira vi не сохранён: %v\n", serr)
+		}
+	}
+	return nil, err
 }
 
 // ---------- модель ----------
@@ -282,9 +315,18 @@ type viModel struct {
 	boardLeft int
 	colTop    map[string]int // статус → первая видимая карточка колонки
 
-	detailKey  string
-	detailText string // текст jira show; "" — загружается
-	detailTop  int
+	detailKey string // открытая подробно задача
+	detailTop int
+
+	// подробности задач — для подробного вида и панели справа (vi_detail.go)
+	preview      bool              // панель справа включена (видна, если окно позволяет)
+	details      map[string]*viDet // загруженные подробности по ключу задачи
+	detailGen    int               // растёт при сбросе: ответ, запрошенный до сброса, не кладётся
+	fetching     string            // чьи подробности загружаются; одновременно — одни
+	waiting      string            // чьи подробности ждут паузы в листании
+	previewDelay time.Duration     // пауза: пока выбор бежит по списку, запросы не идут
+
+	st viState // что сохранить при выходе: выбранное в экране
 
 	// панель внизу: не больше одной сразу
 	input   *viInput
@@ -301,9 +343,30 @@ type viModel struct {
 }
 
 func newViModel(c *Client, s viScope, issues []viIssue, total int) *viModel {
-	m := &viModel{c: c, scope: s, issues: issues, total: total, colTop: map[string]int{}, open: openBrowser}
+	m := &viModel{c: c, scope: s, issues: issues, total: total, colTop: map[string]int{}, open: openBrowser,
+		preview: true, details: map[string]*viDet{}, previewDelay: 150 * time.Millisecond,
+		st: viState{URL: c.base}}
 	m.fixSel()
 	return m
+}
+
+// restore — вид и панель как в прошлый раз (область уже выбрана в cmdVi).
+func (m *viModel) restore(st viState) {
+	m.st = st
+	m.mode = viList
+	if st.View == viStateBoard {
+		m.mode = viBoard
+	}
+	m.preview = !st.HidePreview
+}
+
+// setMode переключает список и канбан и запоминает выбор.
+func (m *viModel) setMode(mode viMode) {
+	m.mode = mode
+	m.st.View = viStateList
+	if mode == viBoard {
+		m.st.View = viStateBoard
+	}
 }
 
 func (m *viModel) quitting() bool { return m.quit }
@@ -313,12 +376,14 @@ func (m *viModel) flashErr(s string) { m.status, m.isErr = s, true }
 
 // ---------- сообщения ----------
 
-// viLoaded — задачи области scope загружены (при ошибке область остаётся прежней).
+// viLoaded — задачи области scope загружены (при ошибке область остаётся прежней);
+// chosen — область выбрали в экране (проект, мои или все): её запомнить.
 type viLoaded struct {
 	scope  viScope
 	issues []viIssue
 	total  int
 	note   string
+	chosen bool
 	err    error
 }
 
@@ -349,17 +414,29 @@ type viTransitions struct {
 	err    error
 }
 
+// viDetail — подробности задачи загружены; gen — поколение кэша на момент запроса.
 type viDetail struct {
-	key, text string
-	err       error
+	key  string
+	gen  int
+	show *showResult
+	err  error
 }
+
+// viWait — пауза в листании прошла: если выбор всё ещё на key, загрузить его подробности.
+type viWait struct{ key string }
 
 type viProjects struct {
 	items []pickItem
 	err   error
 }
 
+// update — шаг модели и загрузка подробностей, которые после него нужны экрану.
 func (m *viModel) update(ms msg) cmd {
+	c := m.step(ms)
+	return batch(c, m.prefetch())
+}
+
+func (m *viModel) step(ms msg) cmd {
 	switch v := ms.(type) {
 	case resizeMsg:
 		m.w, m.h = v.w, v.h
@@ -375,36 +452,38 @@ func (m *viModel) update(ms msg) cmd {
 		m.colTop = map[string]int{}
 		m.flash(v.note)
 		m.fixSel()
+		m.invalidate("")
+		if v.chosen {
+			m.st.Project, m.st.Team = v.scope.project, v.scope.team
+		}
 	case viUpdated:
 		m.busy = ""
 		if v.issue != nil {
 			m.replace(*v.issue)
 		}
 		m.fixSel() // задача могла выпасть из поиска: действия не должны уходить на невидимую
+		m.invalidate(v.key)
 		if v.err != nil {
 			m.flashErr(v.err.Error())
 		} else {
 			m.flash(v.note)
 		}
-		if m.screen == scrDetail && m.detailKey == v.key && v.note != "" {
-			return m.loadDetail(v.key)
-		}
 	case viTransitions:
 		m.busy = ""
 		return m.onTransitions(v)
 	case viDetail:
-		m.busy = ""
-		if v.key != m.detailKey {
-			return nil
+		m.fetching = ""
+		if v.gen == m.detailGen { // иначе задача менялась, пока шёл запрос: ответ мог устареть
+			m.details[v.key] = &viDet{show: v.show, err: v.err}
 		}
-		if v.err != nil {
-			m.flashErr(v.err.Error())
-			if m.detailText == "" {
-				m.screen = scrMain
-			}
-			return nil
+	case viWait:
+		if v.key != m.waiting {
+			return nil // выбор ушёл дальше: ждёт уже другая задача
 		}
-		m.detailText = v.text
+		m.waiting = ""
+		if m.wantDetail() == v.key && m.needDetail(v.key) && m.fetching == "" {
+			return m.fetchDetail(v.key)
+		}
 	case viProjects:
 		m.busy = ""
 		if v.err != nil {
@@ -621,7 +700,9 @@ func (m *viModel) mainKey(k key) cmd {
 	case k.name == keyPgUp:
 		m.move(0, -m.page())
 	case k.is('v') || k.name == keyTab || k.name == keyShiftTab:
-		m.mode = 1 - m.mode
+		m.setMode(1 - m.mode)
+	case k.is('i'):
+		m.togglePreview()
 	case k.is('?'):
 		m.screen = scrHelp
 	case k.is('/'):
@@ -640,7 +721,9 @@ func (m *viModel) mainKey(k key) cmd {
 			return m.reload(m.scope, "обновлено")
 		})
 	case k.name == keyEnter || k.is(' '):
-		return m.withIssue(m.openDetail)
+		if is, ok := m.current(); ok {
+			m.screen, m.detailKey, m.detailTop = scrDetail, is.Key, 0
+		}
 	default:
 		return m.actionKey(k)
 	}
@@ -694,7 +777,7 @@ func (m *viModel) detailKeys(k key) cmd {
 	case k.is('?'):
 		m.screen = scrHelp
 	case k.is('r'):
-		return m.whenIdle(func() cmd { return m.loadDetail(m.detailKey) })
+		m.invalidate(m.detailKey)
 	default:
 		return m.actionKey(k)
 	}
@@ -729,11 +812,16 @@ func (m *viModel) run(label string, f func() msg) cmd {
 }
 
 // reload загружает задачи области s; область меняется, только если загрузка удалась.
-func (m *viModel) reload(s viScope, note string) cmd {
+func (m *viModel) reload(s viScope, note string) cmd { return m.load(s, note, false) }
+
+// choose — reload области, выбранной в экране: после загрузки она запоминается до следующего запуска.
+func (m *viModel) choose(s viScope, note string) cmd { return m.load(s, note, true) }
+
+func (m *viModel) load(s viScope, note string, chosen bool) cmd {
 	c, jql, n := m.c, s.jql(), s.n
 	return m.run("загрузка", func() msg {
 		issues, total, err := viSearch(c, jql, n)
-		return viLoaded{scope: s, issues: issues, total: total, note: note, err: err}
+		return viLoaded{scope: s, issues: issues, total: total, note: note, chosen: chosen, err: err}
 	})
 }
 
@@ -752,7 +840,7 @@ func (m *viModel) toggleTeam() cmd {
 	default:
 		note = "только мои задачи"
 	}
-	return m.reload(s, note)
+	return m.choose(s, note)
 }
 
 // viRefetch перечитывает задачу после действия note.
@@ -967,26 +1055,6 @@ func (m *viModel) askFilter() {
 	}
 }
 
-// ---------- подробно ----------
-
-func (m *viModel) openDetail(is viIssue) cmd {
-	m.screen, m.detailKey, m.detailText, m.detailTop = scrDetail, is.Key, "", 0
-	return m.loadDetail(is.Key)
-}
-
-func (m *viModel) loadDetail(k string) cmd {
-	c := m.c
-	return m.run("загрузка "+k, func() msg {
-		s, err := loadShow(c, k, 10, true)
-		if err != nil {
-			return viDetail{key: k, err: err}
-		}
-		var b strings.Builder
-		s.text(textWriter{&b})
-		return viDetail{key: k, text: b.String()}
-	})
-}
-
 // ---------- проекты ----------
 
 func (m *viModel) openProjects() cmd {
@@ -1044,7 +1112,7 @@ func (m *viModel) pickProject() {
 		if it.value != "" {
 			note = "проект " + it.value
 		}
-		return m.reload(s, note)
+		return m.choose(s, note)
 	}}
 	for i, it := range m.projects {
 		if it.value == m.scope.project {

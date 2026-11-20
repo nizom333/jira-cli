@@ -92,16 +92,18 @@ func updateConfig(change func(*config)) error {
 	return writeConfig(path, cfg)
 }
 
-// writeConfig пишет файл целиком через временный и rename: прерванная запись не оставит обрезанный JSON.
-func writeConfig(path string, cfg config) error {
-	b, err := json.MarshalIndent(cfg, "", "  ")
+func writeConfig(path string, cfg config) error { return writeJSONFile(path, cfg) }
+
+// writeJSONFile пишет файл целиком через временный и rename: прерванная запись не оставит обрезанный JSON.
+func writeJSONFile(path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "config-*.json") // CreateTemp даёт права 0600
+	tmp, err := os.CreateTemp(filepath.Dir(path), strings.TrimSuffix(filepath.Base(path), ".json")+"-*.json") // права 0600
 	if err != nil {
 		return err
 	}
